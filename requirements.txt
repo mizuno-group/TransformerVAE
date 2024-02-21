@@ -1,0 +1,5 @@
+numpy==1.21
+pandas==1.2
+tqdm==4.63
+addict==2.4
+rdkit==2023.03

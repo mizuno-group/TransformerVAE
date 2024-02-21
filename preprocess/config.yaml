@@ -1,0 +1,19 @@
+processname:
+  argname: processname
+  required: true
+input:
+  argname: data
+  required: true
+voc_file: data/smiles_vocs.txt
+max_workers:
+  argname: max_workers
+  default: 1
+  type: int
+chunk_size: 500000
+seed:
+  argname: seed
+  default: 0
+  type: int
+enable_rdkit_warning:
+  argname: enable_rdkit_warning
+  action: store_true

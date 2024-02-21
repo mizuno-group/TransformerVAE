@@ -1,0 +1,438 @@
+variables:
+  $name:
+    argname: name
+    required: true
+  $train_data:
+    argname: train_data
+    required: true
+  $val_data:
+    argname: val_data
+    required: true
+  $seed:
+    argname: seed
+    type: int
+    default: 1
+  $clip_grad_norm:
+    argname: clip_grad_norm
+    type: float
+  $lr:
+    argname: lr
+    type: float
+    default: 0.001
+  $optimizer:
+    argname: optimizer
+    default: adam
+  $gpuid:
+    argname: gpuid
+    type: int
+  $max_step:
+    argname: max_step
+    type: int
+    default: 250000
+  $detect_anomaly:
+    argname: detect_anomaly
+    action: store_true
+  $deterministic:
+    argname: deterministic
+    action: store_true
+  $pad_token: 0
+  $start_token: 1
+  $end_token: 2
+  $voc_size: 45
+  $opt_freq: 1
+  $scheduler_start: 0 # opt_freq-1
+  $beta:
+    argname: beta
+    type: float
+    default: 0.001
+  $emodel:
+    argname: emodel
+    type: int
+    default: 512
+  $dmodel:
+    argname: dmodel
+    type: int
+    default: 512
+  $pooled_size:
+    argname: pooled_size
+    type: int
+    default: 1536 # emodel *pooling_scaler
+  $lsize:
+    argname: lsize
+    type: int
+    default: 512
+  $dropout:
+    argname: dropout
+    type: float
+    default: 0.0
+  $pe_dropout:
+    argname: pe_dropout
+    type: float
+    default: 0.0
+  $enc_num_layers:
+    argname: enc_num_layers
+    type: int
+    default: 8
+  $dec_num_layers:
+    argname: dec_num_layers
+    type: int
+    default: 8
+  $max_len: 
+    argname: max_len
+    type: int
+    default: 122 # MOSES dataset
+
+training:
+  result_dir:
+    dirname: ./training/results/$name
+    duplicate: ask
+  gpuid: $gpuid
+  detect_anomaly: $detect_anomaly
+  deterministic: $deterministic
+  data:
+    train:
+      type: bucket
+      datasets:
+        datasets:
+          input:
+            type: string
+            padding_value: 0
+            path_list: ./preprocess/results/$train_data/ran_tokens.pkl
+          target:
+            type: string
+            padding_value: 0
+            path_list: ./preprocess/results/$train_data/can_tokens.pkl
+      seed: $seed
+      bucket_dset: input
+      batch_size: 128
+      bins: []
+      bin_linspace: null
+      add_lower_margin: true
+      add_upper_margin: true
+    vals:
+      base:
+        type: bucket
+        datasets:
+          datasets:
+            input:
+              type: string
+              padding_value: 0
+              path_list: ./preprocess/results/$val_data/ran_tokens.pkl
+            target:
+              type: string
+              padding_value: 0
+              path_list: ./preprocess/results/$val_data/can_tokens.pkl
+        seed: $seed
+        bucket_dset: input
+        batch_size: 128
+        bins: []
+        bin_linspace: null
+        add_lower_margin: true
+        add_upper_margin: true
+  optimizer:
+    type: $optimizer
+    lr: $lr
+  schedule:
+    opt_freq: $opt_freq
+  pre_hooks:
+    save:
+      type: save_alarm
+      alarm:
+        type: list
+        target: step
+        list: [0, 10000, 20000, 30000, 40000, 50000, 100000, 150000, 200000, 250000, 300000, 400000, 500000, 1000000]
+      end: true
+    checkpoint:
+      type: checkpoint_alarm
+      alarm:
+        type: count
+        target: step
+        step: 50000
+        start: 50000
+      end: true
+    validation:
+      type: validation_alarm
+      alarm:
+        type: count
+        target: step
+        step: 2500
+      end: True
+    step_abort:
+      type: step_abort
+      threshold: $max_step
+  post_hooks:
+    scheduler:
+      type: scheduler_alarm
+      alarm:
+        target: step
+        type: count
+        step: $opt_freq
+        start: $scheduler_start
+      scheduler:
+        type: warmup
+        warmup:
+          argname: warmup
+          type: int
+          default: 4000
+  regularize_loss:
+    clip_grad_norm: $clip_grad_norm
+    normalize: false
+  verbose:
+    show_tqdm: True
+    loglevel:
+      stream: info
+      file: debug
+  metrics:
+    Perfect accuracy:
+      type: perfect
+      input: forced
+      target: dec_target
+      pad_token: $pad_token
+    Partial accuracy (greedy decode):
+      type: partial
+      input: greedy
+      target: dec_target
+      pad_token: $pad_token
+    Partial accuracy (teacher forcing):
+      type: partial
+      input: forced
+      target: dec_target
+      pad_token: $pad_token
+  accumulators:
+    - type: numpy
+      input: latent
+      org_type: torch.tensor
+      batch_dim: 0
+    - type: numpy
+      input: mu
+      org_type: torch.tensor
+      batch_dim: 0
+    - type: numpy
+      input: var
+      org_type: torch.tensor
+      batch_dim: 0
+  init_weight: false
+  init_seed: $seed
+  train_loop:
+  - module: teacherforcer
+    input: target
+    output: [dec_input, dec_target, dec_target_len]
+    return_len: true
+  - module: masker
+    input: input
+    output: input_padding_mask
+  - module: enc_embedding
+    input: input
+    output: input_emb
+  - module: encoder
+    input:  [input_emb, input_padding_mask]
+    output: memory
+  - type: function
+    function:
+      type: transpose
+      dim0: 0
+      dim1: 1
+    input: input_padding_mask
+    output: input_padding_mask2
+  - module: pooler
+    input: [memory, input_padding_mask2]
+    output: latent_base
+  - module: latent2mu
+    input: latent_base
+    output: mu
+  - module: latent2var
+    input: latent_base
+    output: var
+  - module: vae
+    input:
+      mu: mu
+      var: var
+    output: latent
+  - module: dec_embedding
+    input: dec_input
+  - module: decoder
+    input:
+      latent: latent
+      tgt: dec_input
+    output: dec_output
+    mode: forced
+  - module: dec2proba
+    input: dec_output
+  - module: sequencece
+    input: [dec_output, dec_target]
+    output: sequencece
+  - module: -d_kl
+    input: [mu, var]
+    output: -d_kl
+  - module: -d_kl_factor
+    input: -d_kl
+  loss_names: [sequencece, -d_kl]
+  val_loop_add_train: true
+  val_loop: 
+  - module: dec_supporter
+    mode: force
+    input: dec_output
+    output: forced
+  - module: decoder
+    mode: prepare_cell_forward
+    input: 
+      latent: latent
+    output: state
+  - module: dec_supporter
+    mode: init
+    input: 
+      batch_size: batch_size
+    output: [cur_input, greedy]
+  - type: iterate
+    length: dec_target_len
+    processes:
+    - module: dec_embedding
+      input: 
+        input: cur_input
+        position: iterate_i
+      output: cur_input
+    - module: decoder
+      mode: cell_forward
+      input: 
+        tgt: cur_input
+        latent: latent
+        state: state
+        position: iterate_i
+      output: [cur_output, state]
+    - module: dec2proba
+      input: cur_output
+    - module: dec_supporter
+      mode: add
+      input: 
+        cur_proba: cur_output
+        outs: greedy
+      output: [cur_input, greedy]
+  - module: dec_supporter
+    input: greedy
+    output: greedy
+    mode: aggregate
+model:
+  modules:
+    teacherforcer:
+      type: TeacherForcer
+      length_dim: 1
+    masker:
+      type: MaskMaker
+      mask_token: $pad_token
+      dtype: bool
+      direction: equal
+    enc_embedding:
+      type: PositionalEmbedding
+      embedding:
+        num_embeddings: $voc_size
+        embedding_dim: $emodel
+        padding_idx: $pad_token
+      dropout: $pe_dropout
+      max_len: $max_len
+    encoder:
+      type: TransformerEncoder
+      layer:
+        d_model: $emodel
+        nhead: 8
+        d_ff_factor: 4
+        dropout: $dropout
+        activation: newgelu
+        layer_norm_eps: 1.0e-9
+      n_layer: $enc_num_layers
+      init:
+        self_attn.in_proj_weight: glorot_uniform
+        self_attn.in_proj_bias: zero
+        self_attn.out_proj.weight: glorot_uniform
+        self_attn.out_proj.bias: zero
+        linear1.weight:
+          type: normal
+          mean: 0.0
+          std: 0.02
+        linear1.bias: zero
+        linear2.weight:
+          type: normal
+          mean: 0.0
+          std: 0.02
+        linear2.bias: zero
+    pooler:
+      type: NoAffinePooler
+      input_size: [max_len, batch_size, $emodel]
+    latent2mu:
+      type: Tunnel
+      input_size: [batch_size, $pooled_size]
+      layers:
+      - type: linear
+        size: $lsize
+        init:
+          bias: zero
+    latent2var:
+      type: Tunnel
+      input_size: [batch_size, $pooled_size]
+      layers:
+      - type: linear
+        size: $lsize
+        init:
+          bias: zero
+      - type: function
+        function:
+          type: softplus
+    vae:
+      type: VAE
+    dec_embedding:
+      type: PositionalEmbedding
+      embedding:
+        num_embeddings: $voc_size
+        embedding_dim: $dmodel
+        padding_idx: $pad_token
+      dropout: $pe_dropout
+      max_len: $max_len
+    decoder:
+      type: AttentionDecoder
+      max_len: $max_len
+      layer:
+        d_model: $dmodel
+        nhead: 8
+        dropout: $dropout
+        layer_norm_eps: 1.0e-09
+        activation: newgelu
+        d_ff_factor: 4
+      num_layers: $dec_num_layers
+      init:
+        self_attn.in_proj_weight: glorot_uniform
+        self_attn.in_proj_bias: zero
+        self_attn.out_proj.weight: glorot_uniform
+        self_attn.out_proj.bias: zero
+        linear1.weight:
+          type: normal
+          mean: 0.0
+          std: 0.02
+        linear1.bias: zero
+        linear2.weight:
+          type: normal
+          mean: 0.0
+          std: 0.02
+        linear2.bias: zero
+    dec2proba:
+      type: Tunnel
+      input_size: [batch_size, length, $dmodel]
+      layers:
+      - type: layernorm
+        args:
+          elementwise_affine: False
+      - type: linear
+        size: $voc_size
+        init:
+          bias: zero
+    dec_supporter:
+      type: GreedyDecoder
+      start_token: $start_token
+      end_token: $end_token
+    sequencece:
+      type: CrossEntropyLoss
+      reduction: sum
+      ignore_index: $pad_token
+    -d_kl:
+      type: MinusD_KLLoss
+    -d_kl_factor:
+      type: Affine
+      weight: $beta
