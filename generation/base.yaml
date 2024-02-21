@@ -1,0 +1,183 @@
+
+variables:
+  $name:
+    argname: name
+    required: true
+  $weight_path:
+    argname: weight
+    required: true
+  $n_generation:
+    argname: 'n'
+    type: int
+    required: true
+  $max_workers:
+    argname: max_workers
+    type: int
+    default: 1
+  $max_len:
+    argname: max_len
+    type: int
+    default: 122
+  $dropout:
+    argname: dropout
+    type: float
+    default: 0.0
+  $dmodel:
+    argname: dmodel
+    type: int
+    default: 512
+  $pe_dropout:
+    argname: pe_dropout
+    type: float
+    default: 0.0
+  $dec_num_layers:
+    argname: dec_num_layers
+    type: int
+    default: 8
+  $beam_size: 4
+  $dec_type: beam
+  $voc_size: 45
+  $pad_token: 0
+  $start_token: 1
+  $end_token: 2
+  $voc_size: 45
+  $gpuid: null
+  $lsize: 512
+  $step: 200000
+  $studyname: 231020_tvae_ablations/seed0
+  $training_dir: ../../training/results
+  $batch_size: 128
+
+batch_size: $batch_size
+decode_len: $max_len
+gpuid: $gpuid
+load:
+  path: $weight_path
+  strict: false
+max_workers: $max_workers
+n_generation: $n_generation
+processes:
+- module: vae
+  input: null
+  output: latent
+  mode: generate
+  batch_size: $batch_size
+  latent_size: $lsize
+- beam_size: 4
+  input:
+    latent: latent
+  mode: beam_init
+  module: dec_supporter
+  output: [latent, cur_input, pred, proba, is_ended]
+- input:
+    latent: latent
+  mode: prepare_cell_forward
+  module: decoder
+  output: state
+- length: $max_len
+  processes:
+  - input:
+      input: cur_input
+      position: iterate_i
+    module: dec_embedding
+    output: cur_input
+  - input:
+      latent: latent
+      position: iterate_i
+      state: state
+      tgt: cur_input
+    mode: cell_forward
+    module: decoder
+    output: [cur_output, state]
+  - input: cur_output
+    module: dec2proba
+  - input:
+      cur_proba: cur_output
+      is_ended: is_ended
+      outs: pred
+      proba: proba
+    mode: beam_add
+    module: dec_supporter
+    output: [cur_input, proba, pred, is_ended, beam_index]
+  - input:
+      beam_index: beam_index
+      state: state
+    mode: gather_beam
+    module: decoder
+    output: state
+  type: iterate
+- input:
+    outs: pred
+  mode: beam_aggregate
+  module: dec_supporter
+  output: pred
+result_dir:
+  dirname: ./generation/results/$name
+  duplicate: ask
+token_accumulator:
+  batch_dim: 0
+  input: pred
+  type: list
+voc_file: ./data/smiles_vocs.txt
+model:
+  modules:
+    vae:
+      type: VAE
+    dec_embedding:
+      type: PositionalEmbedding
+      embedding:
+        num_embeddings: $voc_size
+        embedding_dim: $dmodel
+        padding_idx: $pad_token
+      dropout: $pe_dropout
+      max_len: $max_len
+    decoder:
+      type: AttentionDecoder
+      max_len: $max_len
+      layer:
+        d_model: $dmodel
+        nhead: 8
+        dropout: $dropout
+        layer_norm_eps: 1.0e-09
+        activation: newgelu
+        d_ff_factor: 4
+      num_layers: $dec_num_layers
+      init:
+        self_attn.in_proj_weight: glorot_uniform
+        self_attn.in_proj_bias: zero
+        self_attn.out_proj.weight: glorot_uniform
+        self_attn.out_proj.bias: zero
+        linear1.weight:
+          type: normal
+          mean: 0.0
+          std: 0.02
+        linear1.bias: zero
+        linear2.weight:
+          type: normal
+          mean: 0.0
+          std: 0.02
+        linear2.bias: zero
+    dec2proba:
+      type: Tunnel
+      input_size: [batch_size, length, $dmodel]
+      layers:
+      - type: layernorm
+        args:
+          elementwise_affine: False
+      - type: linear
+        size: $voc_size
+        init:
+          bias: zero
+    dec_supporter:
+      type: GreedyDecoder
+      start_token: $start_token
+      end_token: $end_token
+    sequencece:
+      type: CrossEntropyLoss
+      reduction: sum
+      ignore_index: $pad_token
+    -d_kl:
+      type: MinusD_KLLoss
+    -d_kl_factor:
+      type: Affine
+      weight: $beta
