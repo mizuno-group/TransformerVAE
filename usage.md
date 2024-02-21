@@ -34,7 +34,7 @@ python train.py --name example --train_data train_example --val_data val_example
 ```
 
 ## Trained model weights
-Trained model weight can be downloaded from [Google Drive](link_of_drive).  
+Trained model weight can be downloaded from [Google Drive](https://drive.google.com/open?id=1nAWJpFPSsnd_y3nE7xHWcdSgA64WX5Je&usp=drive_fs).  
 Currently, the following models are available:
 - moses/: Fully trained model trained by [MOSES](https://github.com/molecularsets/moses) dataset.
 - zinc/: Fully trained model trained by [ZINC-15](https://zinc15.docking.org/) dataset.  
