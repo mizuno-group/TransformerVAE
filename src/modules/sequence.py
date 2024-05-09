@@ -66,6 +66,13 @@ class SelfAttentionLayer(nn.TransformerEncoderLayer):
         activation = function_name2func[activation]
         super().__init__(d_model=d_model, dim_feedforward=dim_feedforward, activation=activation, norm_first=norm_first, **kwargs)
 
+def load_pe_pre_hook_load(model, state_dict, prefix, local_metadata, strict,
+        missing_keys, upexpected_keys, error_msgs):
+    if prefix+"pe" in state_dict:
+        model.register_buffer('pe', state_dict[prefix+"pe"])
+    else:
+        state_dict[prefix+"pe"] = model.pe
+
 class PositionalEmbedding(nn.Module):
     def __init__(self, embedding: dict, dropout: float, max_len:int, 
         factorize:bool=False):
@@ -94,6 +101,7 @@ class PositionalEmbedding(nn.Module):
         pe[:, 1::2] = torch.cos(position * div_term)
         pe = pe.unsqueeze(1)
         self.register_buffer('pe', pe)
+        self._register_load_state_dict_pre_hook(load_pe_pre_hook_load, with_module=True)
     
     def forward(self, input, position: int=None):
         """
