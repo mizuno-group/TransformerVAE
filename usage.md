@@ -62,6 +62,6 @@ Molecules can be decoded from arbitrary latent variables using ```decode.py```.
 ```
 python decode.py --latent path_to_latent_variables --weight path_to_model_weight_dir --name <decoding name>
 ```
-- Latent variables to be decoded must be prepared in a csv format. Each row has to contain latent variables of one molecule without index columns (A header row has to exist). A feature file made in ```featurization.py``` satisfies the format.   
+- Latent variables to be decoded must be prepared in a csv format. Each row has to contain latent variables of one molecule without index column (A header row has to exist). A feature file made by ```featurization.py``` satisfies this format.   
     The path to the prepared latent variables file has to be specified in ```--latent``` option.
 - ```<decoding name>``` can be an arbitrary string. Decoded SMILES will be stored in ```./decoding/results/<decoding name>/decoded_smiles.txt```. This file contains SMILES of each molecule without header.
