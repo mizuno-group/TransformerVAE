@@ -1,0 +1,159 @@
+variables:
+  $name:
+    argname: name
+    required: true
+  $max_len:
+    argname: max_len
+    default: 122 # ?
+  $batch_size:
+    argname: batch_size
+    type: int
+    default: 128
+  $latent_path:
+    argname: latent
+    required: true
+  $weight_path:
+    argname: weight
+    required: true
+  $gpuid:
+    argname: gpuid
+    type: int
+  $seed:
+    argname: seed
+    type: int
+    default: 0
+  
+  $pad_token: 0
+  $start_token: 1
+  $end_token: 2
+  $voc_size: 45
+  $dmodel:
+    argname: dmodel
+    type: int
+    default: 512
+  $pe_dropout:
+    argname: pe_dropout
+    type: float
+    default: 0.0
+  $dec_num_layers:
+    argname: dec_num_layers
+    type: int
+    default: 8
+  $dropout:
+    argname: dropout
+    type: float
+    default: 0.0
+voc_file: data/smiles_vocs.txt
+result_dir:
+  dirname: ./decoding/results/$name
+  duplicate: ask
+gpuid: $gpuid
+data:
+  type: normal
+  seed: $seed
+  batch_size: $batch_size
+  datasets: 
+    dfs:
+      latent:
+        filepath_or_buffer: $latent_path
+    datasets:
+      latent: 
+        type: dataframe
+        df: latent
+        dtype: float
+weight_path: $weight_path
+accumulators:
+  decoded_tokens:
+    type: list
+    input: greedy
+model:
+  modules:
+    dec_embedding:
+      type: PositionalEmbedding
+      embedding:
+        num_embeddings: $voc_size
+        embedding_dim: $dmodel
+        padding_idx: $pad_token
+      dropout: $pe_dropout
+      max_len: $max_len
+    decoder:
+      type: AttentionDecoder
+      max_len: $max_len
+      layer:
+        d_model: $dmodel
+        nhead: 8
+        dropout: $dropout
+        layer_norm_eps: 1.0e-09
+        activation: newgelu
+        d_ff_factor: 4
+      num_layers: $dec_num_layers
+      init:
+        self_attn.in_proj_weight: glorot_uniform
+        self_attn.in_proj_bias: zero
+        self_attn.out_proj.weight: glorot_uniform
+        self_attn.out_proj.bias: zero
+        linear1.weight:
+          type: normal
+          mean: 0.0
+          std: 0.02
+        linear1.bias: zero
+        linear2.weight:
+          type: normal
+          mean: 0.0
+          std: 0.02
+        linear2.bias: zero
+    dec2proba:
+      type: Tunnel
+      input_size: [batch_size, length, $dmodel]
+      layers:
+      - type: layernorm
+        args:
+          elementwise_affine: False
+      - type: linear
+        size: $voc_size
+        init:
+          bias: zero
+    dec_supporter:
+      type: GreedyDecoder
+      start_token: $start_token
+      end_token: $end_token
+
+processes:
+- module: decoder
+  mode: prepare_cell_forward
+  input: 
+    latent: latent
+  output: state
+- module: dec_supporter
+  mode: init
+  input: 
+    batch_size: batch_size
+  output: [cur_input, greedy]
+- type: iterate
+  length: $max_len
+  processes:
+  - module: dec_embedding
+    input: 
+      input: cur_input
+      position: iterate_i
+    output: cur_input
+  - module: decoder
+    mode: cell_forward
+    input: 
+      tgt: cur_input
+      latent: latent
+      state: state
+      position: iterate_i
+    output: [cur_output, state]
+  - module: dec2proba
+    input: cur_output
+  - module: dec_supporter
+    mode: add
+    input: 
+      cur_proba: cur_output
+      outs: greedy
+    output: [cur_input, greedy]
+- module: dec_supporter
+  input: greedy
+  output: greedy
+  mode: aggregate

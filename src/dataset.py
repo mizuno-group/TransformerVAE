@@ -70,7 +70,7 @@ class DataLoader:
             self.load_datasets()
         if self.current_idxs is None:
             self.current_idxs = self.get_idxs(self.cur_dsets)
-        idx = self.current_idxs[self.i_current_idx]
+        idx = self.current_idxs[self.i_current_idx].astype(int)
         if batch is None: batch = {}
         batch['idx'] = idx
         for dset in self.cur_dsets.values():

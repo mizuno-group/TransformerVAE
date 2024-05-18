@@ -1,0 +1,148 @@
+variables:
+  $name: 
+    argname: name
+    required: true
+  $data:
+    argname: data
+    required: true
+  $weight_path:
+    argname: weight
+    required: true
+  $gpuid:
+    argname: gpuid
+    type: int
+  $seed:
+    argname: seed
+    type: int
+    default: 0
+  
+  # model arguments
+  $emodel:
+    argname: emodel
+    type: int
+    default: 512
+  $pooled_size:
+    argname: pooled_size
+    type: int
+    default: 1536 # emodel * pooling_scaler
+  $lsize:
+    argname: lsize
+    type: int
+    default: 512
+  $dropout:
+    argname: dropout
+    type: float
+    default: 0.0
+  $pe_dropout:
+    argname: pe_dropout
+    type: float
+    default: 0.0
+  $max_len: 
+    argname: max_len
+    type: int
+    default: 122
+  $enc_num_layers:
+    argname: enc_num_layers
+    type: int
+    default: 8
+  $pad_token: 0
+  $voc_size: 45
+  
+result_dir:
+  dirname: ./featurization/results/$name
+  duplicate: ask
+gpuid: $gpuid
+weight_path: $weight_path
+data: 
+  type: bucket
+  datasets:
+    datasets:
+      input:
+        type: string
+        padding_value: 0
+        path_list: ./preprocess/results/$data/ran_tokens.pkl
+  seed: $seed
+  bucket_dset: input
+  batch_size: 128
+  bins: []
+  bin_linspace: null
+  add_lower_margin: true
+  add_upper_margin: true
+model:
+  modules:
+    masker:
+      type: MaskMaker
+      mask_token: $pad_token
+      dtype: bool
+      direction: equal
+    enc_embedding:
+      type: PositionalEmbedding
+      embedding:
+        num_embeddings: $voc_size
+        embedding_dim: $emodel
+        padding_idx: $pad_token
+      dropout: $pe_dropout
+      max_len: $max_len
+    encoder:
+      type: TransformerEncoder
+      layer:
+        d_model: $emodel
+        nhead: 8
+        d_ff_factor: 4
+        dropout: $dropout
+        activation: newgelu
+        layer_norm_eps: 1.0e-9
+      n_layer: $enc_num_layers
+      init:
+        self_attn.in_proj_weight: glorot_uniform
+        self_attn.in_proj_bias: zero
+        self_attn.out_proj.weight: glorot_uniform
+        self_attn.out_proj.bias: zero
+        linear1.weight:
+          type: normal
+          mean: 0.0
+          std: 0.02
+        linear1.bias: zero
+        linear2.weight:
+          type: normal
+          mean: 0.0
+          std: 0.02
+        linear2.bias: zero
+    pooler:
+      type: NoAffinePooler
+      input_size: [max_len, batch_size, $emodel]
+    latent2mu:
+      type: Tunnel
+      input_size: [batch_size, $pooled_size]
+      layers:
+      - type: linear
+        size: $lsize
+        init:
+          bias: zero
+processes:
+- module: masker
+  input: input
+  output: input_padding_mask
+- module: enc_embedding
+  input: input
+  output: input_emb
+- module: encoder
+  input:  [input_emb, input_padding_mask]
+  output: memory
+- type: function
+  function:
+    type: transpose
+    dim0: 0
+    dim1: 1
+  input: input_padding_mask
+  output: input_padding_mask2
+- module: pooler
+  input: [memory, input_padding_mask2]
+  output: latent_base
+- module: latent2mu
+  input: latent_base
+  output: mu
+accumulators:
+  feature:
+    type: numpy
+    input: mu
