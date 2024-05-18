@@ -27,7 +27,7 @@ def make_result_dir(dirname=None, duplicate=None):
         elif duplicate == 'ask':
             answer = None
             while answer not in ['y', 'n']:
-                answer = input(f"'{dirname}' already exists. Will you overwrite this study? (y/n)")
+                answer = input(f"'{dirname}' already exists. Will you overwrite? (y/n)")
             if answer == 'n':
                 return
         elif duplicate in {'overwrite', 'merge'}:

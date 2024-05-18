@@ -1,14 +1,13 @@
 import sys, os
-sys.path += [os.environ.get("PROJECT_DIR", "..")]
 import pickle
 import time
 import shutil
+import random
 
 import yaml
 import numpy as np
 import pandas as pd
 import torch
-import random
 from tqdm import tqdm
 
 from src.utils.path import make_result_dir, timestamp

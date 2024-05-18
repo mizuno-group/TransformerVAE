@@ -66,6 +66,22 @@ class SelfAttentionLayer(nn.TransformerEncoderLayer):
         activation = function_name2func[activation]
         super().__init__(d_model=d_model, dim_feedforward=dim_feedforward, activation=activation, norm_first=norm_first, **kwargs)
 
+def get_posenc(length: int, emb_size: int) -> torch.Tensor:
+    """
+    Returns
+    -------
+    pe: torch.tensor(float)[length, 1(batch_size dim), emb_size]
+    
+    """
+    pe = torch.zeros(length, emb_size)
+    position = torch.arange(0, length).unsqueeze(1)
+    div_term = torch.exp(torch.arange(0, emb_size, 2) *
+                            -(math.log(10000.0) / emb_size))
+    pe[:, 0::2] = torch.sin(position * div_term)
+    pe[:, 1::2] = torch.cos(position * div_term)
+    pe = pe.unsqueeze(1)
+    return pe
+
 def load_pe_pre_hook_load(model, state_dict, prefix, local_metadata, strict,
         missing_keys, upexpected_keys, error_msgs):
     if prefix+"pe" in state_dict:
@@ -88,22 +104,17 @@ class PositionalEmbedding(nn.Module):
         """
         super().__init__()
         self.embedding = nn.Embedding(**embedding)
-        emb_size = embedding['embedding_dim']
+        self.emb_size = embedding['embedding_dim']
+        self.max_len = max_len
         self.factorize = factorize
         if self.factorize:
-            self.factor = math.sqrt(emb_size)
+            self.factor = math.sqrt(self.emb_size)
         self.dropout = nn.Dropout(p=dropout)
-        pe = torch.zeros(max_len, emb_size)
-        position = torch.arange(0, max_len).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, emb_size, 2) *
-                             -(math.log(10000.0) / emb_size))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(1)
+        pe = get_posenc(max_len, self.emb_size)
         self.register_buffer('pe', pe)
         self._register_load_state_dict_pre_hook(load_pe_pre_hook_load, with_module=True)
     
-    def forward(self, input, position: int=None):
+    def forward(self, input: torch.Tensor, position: int=None):
         """
         Transpose is included here.
 
@@ -117,6 +128,12 @@ class PositionalEmbedding(nn.Module):
         output(torch.float)[length, batch_size, embedding_dim]: 
         """
         input = self.embedding(input.transpose(0, 1).contiguous())
+        length = input.shape[0]
+        if length > self.max_len:
+            print("[WARNING] overflow in Positional embedding. PE is extended.")
+            pe = get_posenc(length=length, emb_size=self.emb_size).to(self.pe.device)
+            self.register_buffer('pe', pe)
+            self.max_len = length
         if self.factorize:
             input *= self.factor
         if position is None:

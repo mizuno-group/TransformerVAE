@@ -31,7 +31,7 @@ def process(smiles, voc_file, seed):
             mol = Chem.MolFromSmiles(smile)
             can = tokenizer.tokenize(Chem.MolToSmiles(mol))
             nums = np.arange(mol.GetNumAtoms())
-            np.random.shuffle(nums)
+            random_state.shuffle(nums)
             mol = Chem.RenumberAtoms(mol, nums.tolist())
             ran = tokenizer.tokenize(Chem.MolToSmiles(mol, canonical=False))
             cans.append(can)
